@@ -23,13 +23,13 @@ It prints JSON: `to_write` lists the skills that have no plain-language guide en
 
 Base each entry on the skill's description; read its `SKILL.md` only when the description is missing or unclear. Never claim a skill does something its description does not say. For a skill meant for developers, say so plainly ("코드로 영상을 만드는 개발자용 도구예요").
 
-Write all entries to a temporary JSON file shaped `{"skill-name": {"what": "...", "when": "...", "try": "..."}}` and save it:
+Write all entries to a temporary JSON file shaped `{"<key>": {"what": "...", "when": "...", "try": "..."}}`, using each skill's `key` from `to_write` (a personal skill's key is its name; a plugin or project skill's key is prefixed, so two skills with the same name keep separate entries), and save it:
 
 ```bash
 python3 ".../scripts/audit.py" guide --save /path/to/entries.json
 ```
 
-Entries are kept in `<config>/skill-audit/guide.json` and reused, so later runs only ask for new or changed skills. With more than about 40 skills, write and save them in batches. If the user asks to rewrite the guide (another language, simpler words), run `guide --all` and save over it.
+If the saved guide file is damaged, `--save` stops without writing: tell the user, and do not delete the file. Entries are kept in `<config>/skill-audit/guide.json` and reused, so later runs only ask for new or changed skills. With more than about 40 skills, write and save them in batches. If the user asks to rewrite the guide (another language, simpler words), run `guide --all` and save over it.
 
 ## 2. Run the report
 
@@ -39,7 +39,7 @@ python3 "<this skill's base directory>/scripts/audit.py" report --html
 
 This prints the text report for you to read, and also writes a visual page (headline numbers, the skill guide as a card per skill with its command and a copy button, searchable by what the user wants to do, a bar per group, a sortable table of every skill, archived batches with copyable undo commands) to `<config>/skill-audit/report.html` and opens it in the user's browser. The page follows the browser language (Korean or English) and light or dark mode. Tell the user they can bookmark that file; it is a snapshot, refreshed each time `/skill-audit` runs.
 
-Options: `--no-open` writes the page without opening a browser (use it when the user asks for text only, or there is no desktop browser); `--days 30` counts only the last 30 days; `--json` gives machine-readable output; plain `report` without `--html` prints only the text.
+Options: `--no-open` writes the page without opening a browser (use it when the user asks for text only, or there is no desktop browser); `--days 30` counts only the last 30 days; `--json` gives machine-readable output; `--out FILE` saves the text or JSON report and `--html-out FILE` puts the page somewhere else; plain `report` without `--html` prints only the text. If the script says it could not open a browser, give the user the file path instead of saying the page is open.
 
 ## 3. Explain it to the user
 
@@ -67,9 +67,9 @@ Rules for how you explain it:
    python3 ".../scripts/audit.py" archive --unused
    ```
 3. Ask the user to confirm the exact list. Only after a clear yes, run the same command with `--yes`.
-4. Tell them the batch id and the undo command the script prints, and that a new Claude Code session is needed to see the change.
+4. Tell them the batch id and the undo command the script prints (it works from any terminal), and that a new Claude Code session is needed to see the change.
 
-Never delete skill folders, and never run `--yes` without the user approving that exact list. Skills that come from a plugin cannot be archived: tell the user to remove them with `/plugin`. Project skills (in `./.claude/skills`) are left alone unless the user names them or agrees to `--project`, because they belong to a repository other people may share.
+If a personal skill and a plugin or project skill share a name, archiving by name moves the personal one; the script says what it left alone. Never delete skill folders, and never run `--yes` without the user approving that exact list. Skills that come from a plugin cannot be archived: tell the user to remove them with `/plugin`. Project skills (in `./.claude/skills`) are left alone unless the user names them or agrees to `--project`, because they belong to a repository other people may share.
 
 ## Undo
 
@@ -79,4 +79,4 @@ python3 ".../scripts/audit.py" restore --batch <id> --yes  # put a whole batch b
 python3 ".../scripts/audit.py" restore ig-dm --yes          # put one skill back
 ```
 
-Archived skills sit in `<config>/skills-archive/<batch>/`, where `<config>` is `$CLAUDE_CONFIG_DIR` or `~/.claude`.
+Archived skills sit in `<config>/skills-archive/<batch>/`, where `<config>` is `$CLAUDE_CONFIG_DIR` or `~/.claude`. Two skills with the same folder name in one batch are kept side by side (`name__project`). Restore lists anything it could not put back because something already sits at the original place, and exits with an error when nothing moved: tell the user exactly which ones did not come back.

@@ -268,16 +268,22 @@ def _parse_ts(ts):
 def attach_usage(records, events):
     """Fill calls/last/projects on each record. Returns keys used but not matched to any installed skill."""
     matched = set()
+    local_names = set()
+    for rec in records:
+        if not rec["plugin"]:
+            local_names.add(rec["name"])
+            if rec.get("fm_name"):
+                local_names.add(rec["fm_name"])
     for rec in records:
         aliases = {rec["name"]}
         if rec.get("fm_name"):
             aliases.add(rec["fm_name"])
         if rec["plugin"]:
-            aliases |= {f"{rec['plugin']}:{a}" for a in list(aliases)}
+            bare = aliases - local_names
+            aliases = bare | {f"{rec['plugin']}:{a}" for a in aliases}
         calls, last, projects = 0, None, set()
         for key, evs in events.items():
-            tail = key.split(":", 1)[1] if ":" in key else None
-            if key in aliases or (tail and tail in aliases and (not rec["plugin"] or key.startswith(rec["plugin"] + ":"))):
+            if key in aliases:
                 matched.add(key)
                 calls += len(evs)
                 for ts, proj, _kind in evs:
@@ -312,30 +318,72 @@ def desc_hash(desc):
     return hashlib.sha1(desc.encode("utf-8")).hexdigest()[:10]
 
 
-def load_guide(cfg):
+def guide_key(r):
+    """One key per installed skill: a personal skill by name, others prefixed so same-named skills never share an entry."""
+    if r["plugin"]:
+        return f"{r['plugin']}:{r['name']}"
+    return f"project:{r['name']}" if r["source"] == "project" else r["name"]
+
+
+class GuideError(Exception):
+    pass
+
+
+def load_guide(cfg, strict=False):
+    """The saved guide entries. With strict, a file that exists but cannot be read raises instead of reading as empty."""
+    path = guide_path(cfg)
+    if not path.exists():
+        return {}
     try:
-        data = json.loads(guide_path(cfg).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        if strict:
+            raise GuideError(f"{path} could not be read ({e}). Fix or move it first; nothing was saved.")
         return {}
     skills = data.get("skills") if isinstance(data, dict) else None
-    return skills if isinstance(skills, dict) else {}
+    if not isinstance(skills, dict):
+        if strict:
+            raise GuideError(f"{path} has no 'skills' object. Fix or move it first; nothing was saved.")
+        return {}
+    return skills
+
+
+def guide_entry(guide, r):
+    """This skill's entry. Falls back to an entry saved under the bare name by v0.2.0 when its description still matches."""
+    e = guide.get(guide_key(r))
+    if not isinstance(e, dict) and guide_key(r) != r["name"]:
+        old = guide.get(r["name"])
+        if isinstance(old, dict) and old.get("desc_hash") == desc_hash(r["description"]):
+            e = old
+    return e if isinstance(e, dict) else None
 
 
 def guide_state(records, guide):
     """Split loadable skills into (has an up-to-date guide entry, needs one)."""
     ok, need = [], []
     for r in records:
-        e = guide.get(r["name"])
-        fresh = isinstance(e, dict) and e.get("what") and e.get("desc_hash") == desc_hash(r["description"])
+        e = guide_entry(guide, r)
+        fresh = e and e.get("what") and e.get("desc_hash") == desc_hash(r["description"])
         (ok if fresh else need).append(r)
     return ok, need
+
+
+def write_atomic(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def cmd_guide(args):
     cfg = config_dir()
     records = [r for r in discover(cfg, Path.cwd()) if is_skill(r)]
-    guide = load_guide(cfg)
     path = guide_path(cfg)
+    try:
+        guide = load_guide(cfg, strict=bool(args.save))
+    except GuideError as e:
+        print(e, file=sys.stderr)
+        return 1
     if args.save:
         try:
             new = json.loads(Path(args.save).read_text(encoding="utf-8"))
@@ -344,22 +392,36 @@ def cmd_guide(args):
             return 1
         if isinstance(new, dict) and isinstance(new.get("skills"), dict):
             new = new["skills"]
-        by_name = {r["name"]: r for r in records}
-        saved, skipped = [], []
+        by_key = {guide_key(r): r for r in records}
+        by_name = defaultdict(list)
+        for r in records:
+            by_name[r["name"]].append(r)
+        saved, skipped, ambiguous = [], [], []
         for name, e in (new.items() if isinstance(new, dict) else []):
-            if name not in by_name or not isinstance(e, dict) or not str(e.get("what", "")).strip():
+            r = by_key.get(name)
+            if r is None and len(by_name.get(name, [])) == 1:
+                r = by_name[name][0]
+            elif r is None and len(by_name.get(name, [])) > 1:
+                ambiguous.append(name)
+                continue
+            if r is None or not isinstance(e, dict) or not str(e.get("what", "")).strip():
                 skipped.append(name)
                 continue
             entry = {k: " ".join(str(e.get(k, "")).split())[:400] for k in GUIDE_KEYS}
-            entry["desc_hash"] = desc_hash(by_name[name]["description"])
-            guide[name] = entry
-            saved.append(name)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"version": 1, "skills": guide}, ensure_ascii=False, indent=1) + "\n",
-                        encoding="utf-8")
+            entry["desc_hash"] = desc_hash(r["description"])
+            key = guide_key(r)
+            guide[key] = entry
+            old = guide.get(r["name"])
+            if key != r["name"] and isinstance(old, dict) and r["name"] not in by_key:
+                del guide[r["name"]]  # an entry v0.2.0 saved under the bare name
+            saved.append(key)
+        write_atomic(path, json.dumps({"version": 2, "skills": guide}, ensure_ascii=False, indent=1) + "\n")
         print(f"Saved guide entries for {len(saved)} skills to {path}")
         if skipped:
             print(f"Skipped {len(skipped)} (not installed, or no 'what'): {', '.join(skipped)}")
+        if ambiguous:
+            print(f"Skipped {len(ambiguous)} names that more than one skill uses; save them under their key "
+                  f"from `audit.py guide`: {', '.join(ambiguous)}")
         _ok, need = guide_state(records, guide)
         print(f"{len(records) - len(need)} of {len(records)} installed skills now have a guide.")
         return 0
@@ -369,11 +431,20 @@ def cmd_guide(args):
         "guide_file": str(path),
         "installed": len(records),
         "with_guide": len(ok),
-        "to_write": [{"name": r["name"], "invoke": r["invoke"], "source": r["source"],
+        "to_write": [{"key": guide_key(r), "name": r["name"], "invoke": r["invoke"], "source": r["source"],
                       "description": r["description"], "skill_md": str(Path(r["path"]) / "SKILL.md")}
                      for r in todo],
     }, ensure_ascii=False, indent=1))
     return 0
+
+
+def self_cmd():
+    """How to run this script from any terminal, carrying CLAUDE_CONFIG_DIR when this config is not ~/.claude."""
+    cmd = f"python3 {shlex.quote(str(Path(__file__).resolve()))}"
+    env = os.environ.get("CLAUDE_CONFIG_DIR")
+    if env:
+        cmd = f"CLAUDE_CONFIG_DIR={shlex.quote(str(Path(env).expanduser()))} {cmd}"
+    return cmd
 
 
 def build(days):
@@ -495,41 +566,50 @@ def write_html(cfg, records, meta, unmatched, days, out_path, open_it):
     skills = [r for r in records if is_skill(r)]
     keep = ("name", "group", "source", "plugin", "calls", "last_used", "projects", "status",
             "desc_chars", "description", "size", "is_link", "invoke")
+    rows = []
+    for r in skills:
+        row = {k: r.get(k) for k in keep}
+        row["key"] = guide_key(r)
+        rows.append(row)
     guide = load_guide(cfg)
-    restore = f"python3 {shlex.quote(str(Path(__file__).resolve()))} restore --batch {{id}} --yes"
+    restore = f"{self_cmd()} restore --batch {{id}} --yes"
     data = {
         "generated": dt.datetime.now().isoformat(timespec="minutes"),
         "meta": meta,
         "days": days,
-        "skills": [{k: r.get(k) for k in keep} for r in skills],
+        "skills": rows,
         "problems": [{"name": r["name"], "source": r["source"], "problems": r["problems"]}
                      for r in records if r["problems"]],
         "unmatched": unmatched,
         "batches": [{"id": b.name, "names": sorted(mf)} for b, mf in load_batches(cfg)],
         "restore_cmd": restore,
-        "guide": {r["name"]: {k: guide[r["name"]].get(k, "") for k in GUIDE_KEYS}
-                  for r in skills if isinstance(guide.get(r["name"]), dict)},
+        "guide": {guide_key(r): {k: guide_entry(guide, r).get(k, "") for k in GUIDE_KEYS}
+                  for r in skills if guide_entry(guide, r)},
         "guide_missing": len(guide_state(skills, guide)[1]),
     }
-    # Escape "</" so no value can close the <script> tag early.
-    blob = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
+    # Write every "<" as \u003c, so no value (a "</script>" or a "<!--<script") can end or confuse the <script> tag.
+    blob = json.dumps(data, ensure_ascii=False).replace("<", "\\u003c")
     template = (Path(__file__).resolve().parent / "report_template.html").read_text(encoding="utf-8")
     html = template.replace("/*__DATA__*/null", blob, 1)
     out_path = Path(out_path) if out_path else cfg / "skill-audit" / "report.html"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(html, encoding="utf-8")
+    opened = False
     if open_it:
-        webbrowser.open(out_path.resolve().as_uri())
-    return out_path
+        try:
+            opened = bool(webbrowser.open(out_path.resolve().as_uri()))
+        except webbrowser.Error:
+            opened = False
+    return out_path, opened
 
 
 def cmd_report(args):
     cfg, records, meta, unmatched = build(args.days)
+    html_note = None
     if args.html:
-        path = write_html(cfg, records, meta, unmatched, args.days, args.out, not args.no_open)
-        print(report_md(cfg, records, meta, unmatched, args.days))
-        print(f"\nVisual report: {path}" + ("" if args.no_open else " (opened in your browser)"))
-        return
+        path, opened = write_html(cfg, records, meta, unmatched, args.days, args.html_out, not args.no_open)
+        html_note = f"Visual report: {path}" + (" (opened in your browser)" if opened else
+                                                "" if args.no_open else " (could not open a browser: open this file yourself)")
     if args.json:
         text = json.dumps({"config": str(cfg), "meta": meta, "skills": records, "unmatched": unmatched},
                           ensure_ascii=False, indent=2)
@@ -537,9 +617,11 @@ def cmd_report(args):
         text = report_md(cfg, records, meta, unmatched, args.days)
     if args.out:
         Path(args.out).write_text(text + "\n", encoding="utf-8")
-        print(f"Saved report to {args.out}")
+        print(f"Saved report to {args.out}", file=sys.stderr if args.json else sys.stdout)
     else:
         print(text)
+    if html_note:
+        print(("" if args.out else "\n") + html_note, file=sys.stderr if args.json and not args.out else sys.stdout)
 
 
 # ---------------------------------------------------------------- archive / restore
@@ -550,23 +632,35 @@ def archive_root(cfg):
 
 def cmd_archive(args):
     cfg, records, _meta, _ = build(args.days)
-    by_name = {r["name"]: r for r in records}
+    by_name = defaultdict(list)
+    for r in records:
+        by_name[r["name"]].append(r)
     targets, notes = [], []
     for n in args.names:
-        r = by_name.get(n)
-        if not r:
+        rs = by_name.get(n, [])
+        user = [r for r in rs if r["movable"] and r["source"] != "project"]
+        proj = [r for r in rs if r["movable"] and r["source"] == "project"]
+        plug = [r for r in rs if not r["movable"]]
+        if not rs:
             notes.append(f"not found: {n}")
-        elif not r["movable"]:
-            notes.append(f"{n} comes from plugin {r['plugin']}: use /plugin to remove it")
-        else:
-            targets.append(r)
+            continue
+        if user:
+            targets += user
+            if proj and not args.project:
+                notes.append(f"{n}: moving your personal one; a project skill has the same name (add --project to move it too)")
+            elif proj:
+                targets += proj
+        elif proj:
+            targets += proj
+        for r in plug:
+            notes.append(f"{n} {'also ' if user or proj else ''}comes from plugin {r['plugin']}: use /plugin to remove it")
     for g in args.group:
         targets += [r for r in records if r["group"] == g and r["movable"]]
     if args.unused:
         targets += [r for r in records if not r["calls"] and r["movable"]]
     # Project skills belong to a repository; move them only when asked for by name or with --project.
     if not args.project:
-        named = set(args.names)
+        named = {n for n in args.names if not any(r["movable"] and r["source"] != "project" for r in by_name.get(n, []))}
         dropped = [r["name"] for r in targets if r["source"] == "project" and r["name"] not in named]
         if dropped:
             notes.append(f"leaving {len(dropped)} project skill(s) alone (add --project to include them)")
@@ -602,11 +696,16 @@ def cmd_archive(args):
     manifest = {}
     for r in targets:
         src = Path(r["path"])
-        dst = dest_root / src.name
-        shutil.move(str(src), str(dst))
-        manifest[src.name] = str(src)
+        label = src.name
+        if label in manifest:  # two skills with the same folder name: keep both, side by side
+            label = f"{src.name}__{r['source']}"
+            i = 2
+            while label in manifest:
+                label, i = f"{src.name}__{r['source']}{i}", i + 1
+        shutil.move(str(src), str(dest_root / label))
+        manifest[label] = str(src)
     (dest_root / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
-    print(f"\nDone. Batch id: {batch}. Undo with: audit.py restore --batch {batch} --yes")
+    print(f"\nDone. Batch id: {batch}. Undo from any terminal with:\n  {self_cmd()} restore --batch {batch} --yes")
     print("Start a new Claude Code session to see the change.")
     return 0
 
@@ -644,13 +743,16 @@ def cmd_restore(args):
         if not batches:
             print(f"No batch {args.batch}.")
             return 1
-    plan = []
+    plan, dupes = {}, []
     for b, mf in batches:
         for name, original in mf.items():
-            if args.names and name not in args.names:
+            if args.names and name not in args.names and Path(original).name not in args.names:
                 continue
             if (b / name).exists() or (b / name).is_symlink():
-                plan.append((b, name, Path(original)))
+                if original in plan:  # archived again later: the newest copy goes back
+                    dupes.append(f"{name} in batch {plan[original][0].name}")
+                plan[original] = (b, name, Path(original))
+    plan = list(plan.values())
     if not args.names and not args.batch:
         print("Name skills or give --batch. Use `audit.py archives` to list batches.")
         return 1
@@ -661,11 +763,15 @@ def cmd_restore(args):
     for b, name, original in plan:
         clash = " (BLOCKED: something already exists there)" if original.exists() or original.is_symlink() else ""
         print(f"  - {name} -> {original}{clash}")
+    for d in dupes:
+        print(f"  note: an older copy stays archived ({d})")
     if not args.yes:
         print("\nDry run. Nothing moved. Add --yes to do it.")
         return 0
+    restored, blocked = [], []
     for b, name, original in plan:
         if original.exists() or original.is_symlink():
+            blocked.append((name, original))
             continue
         original.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(b / name), str(original))
@@ -680,7 +786,16 @@ def cmd_restore(args):
                 b.rmdir()
             except OSError:
                 pass
-    print("Done. Start a new Claude Code session to see the change.")
+        restored.append(name)
+    if blocked:
+        print(f"\nNot restored ({len(blocked)}): something already exists at the original place. "
+              "Move or rename it, then run this again:")
+        for name, original in blocked:
+            print(f"  - {name} -> {original}")
+    if not restored:
+        print("\nNothing was restored.")
+        return 1
+    print(f"\nRestored {len(restored)} skill(s). Start a new Claude Code session to see the change.")
     return 0
 
 
@@ -696,6 +811,7 @@ def main(argv=None):
     r.add_argument("--out", help="write the report to a file")
     r.add_argument("--html", action="store_true",
                    help="also write a visual HTML report (default <config>/skill-audit/report.html) and open it")
+    r.add_argument("--html-out", metavar="FILE", help="with --html: where to write the HTML report")
     r.add_argument("--no-open", action="store_true", help="with --html: do not open the browser")
     r.set_defaults(func=cmd_report)
 
