@@ -1,0 +1,533 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skill audit</title>
+<style>
+  :root {
+    color-scheme: light;
+    --plane: #f9f9f9;
+    --surface: #ffffff;
+    --ink: #191919;
+    --ink-2: #666666;
+    --hair: #e7e7e7;
+    --ring: rgba(11, 11, 11, 0.10);
+    --used: #1b64be;
+    --unused: #84b9f3;
+    --wash: rgba(37, 125, 224, 0.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --plane: #0b0b0b;
+      --surface: #191919;
+      --ink: #efefef;
+      --ink-2: #9c9c9c;
+      --hair: #303030;
+      --ring: rgba(255, 255, 255, 0.10);
+      --used: #338ced;
+      --unused: #1757ac;
+      --wash: rgba(51, 140, 237, 0.12);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--plane); color: var(--ink);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  }
+  main { max-width: 1080px; margin: 0 auto; padding: 40px 24px 64px; }
+  header { margin-bottom: 28px; }
+  h1 { font-size: 22px; font-weight: 650; margin: 0 0 4px; letter-spacing: -0.01em; }
+  h2 { font-size: 15px; font-weight: 650; margin: 0 0 4px; }
+  .sub { color: var(--ink-2); margin: 0; }
+  .card {
+    min-width: 0;
+    background: var(--surface); border: 1px solid var(--ring); border-radius: 12px;
+    padding: 20px 22px; margin-bottom: 16px;
+  }
+  .card > .sub { margin-bottom: 16px; }
+
+  /* headline */
+  .headline { display: grid; grid-template-columns: minmax(200px, 1.3fr) repeat(4, minmax(0, 1fr)); gap: 16px; align-items: end; }
+  .hero-num { font-size: 52px; font-weight: 650; line-height: 1; letter-spacing: -0.02em; }
+  .hero-num small { font-size: 22px; color: var(--ink-2); font-weight: 500; margin-left: 6px; letter-spacing: 0; }
+  .tile .label { color: var(--ink-2); font-size: 13px; }
+  .tile .value { font-size: 24px; font-weight: 600; line-height: 1.2; }
+  .tile .note { color: var(--ink-2); font-size: 12px; }
+  @media (max-width: 760px) { .headline { grid-template-columns: repeat(2, minmax(0, 1fr)); } .hero { grid-column: 1 / -1; } }
+
+  /* group chart */
+  .legend { display: flex; gap: 16px; color: var(--ink-2); font-size: 13px; margin-bottom: 12px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .key { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  .rows { display: grid; grid-template-columns: max-content minmax(0, 1fr) 64px; column-gap: 12px; row-gap: 10px; align-items: center; }
+  .gname { color: var(--ink); font-size: 13px; text-align: right; white-space: nowrap; }
+  .track { display: flex; gap: 2px; height: 16px; }
+  .seg { height: 16px; outline: none; cursor: default; }
+  .seg.used { background: var(--used); }
+  .seg.unused { background: var(--unused); }
+  .seg.end { border-radius: 0 4px 4px 0; }
+  .seg:hover, .seg:focus-visible { filter: brightness(1.12); box-shadow: 0 0 0 2px var(--surface), 0 0 0 3px var(--ink-2); }
+  .gval { color: var(--ink-2); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #tip {
+    position: fixed; pointer-events: none; z-index: 10; display: none;
+    background: var(--surface); color: var(--ink); border: 1px solid var(--ring); border-radius: 8px;
+    padding: 8px 10px; font-size: 13px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  }
+  #tip b { display: block; font-size: 15px; }
+  #tip span { color: var(--ink-2); }
+
+  /* table */
+  .controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+  input[type=search] {
+    flex: 1 1 220px; min-width: 0; font: inherit; color: var(--ink); background: var(--plane);
+    border: 1px solid var(--ring); border-radius: 8px; padding: 7px 10px;
+  }
+  .seggroup { display: inline-flex; border: 1px solid var(--ring); border-radius: 8px; overflow: hidden; }
+  .seggroup button {
+    font: inherit; font-size: 13px; color: var(--ink-2); background: transparent; border: 0;
+    padding: 7px 12px; cursor: pointer;
+  }
+  .seggroup button + button { border-left: 1px solid var(--ring); }
+  .seggroup button[aria-pressed=true] { color: var(--ink); background: var(--wash); font-weight: 600; }
+  .count { color: var(--ink-2); font-size: 13px; margin-left: auto; }
+  .tablewrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--hair); vertical-align: top; }
+  th { font-size: 12px; font-weight: 600; color: var(--ink-2); white-space: nowrap; user-select: none; }
+  th button { all: unset; cursor: pointer; }
+  th button:focus-visible { outline: 2px solid var(--used); outline-offset: 2px; border-radius: 2px; }
+  th .arrow { display: inline-block; width: 1em; color: var(--ink); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td .nm { font-weight: 600; }
+  td .ds { color: var(--ink-2); font-size: 12px; max-width: 460px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  td.muted { color: var(--ink-2); }
+  .st { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 13px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot.active { background: var(--used); }
+  .dot.occasional { background: var(--unused); }
+  .dot.unused { border: 1.5px solid var(--ink-2); }
+  tr.empty td { color: var(--ink-2); text-align: center; padding: 24px; }
+
+  /* lists */
+  .two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  @media (max-width: 760px) { .two { grid-template-columns: minmax(0, 1fr); } }
+  ul.plain { list-style: none; margin: 0; padding: 0; }
+  ul.plain li { padding: 8px 0; border-bottom: 1px solid var(--hair); }
+  ul.plain li:last-child { border-bottom: 0; }
+  .batch-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .batch-names { color: var(--ink-2); font-size: 12px; margin: 4px 0 6px; }
+  code.cmd {
+    display: block; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink);
+    background: var(--plane); border: 1px solid var(--ring); border-radius: 6px; padding: 6px 8px;
+    overflow-x: auto; white-space: nowrap;
+  }
+  .copy {
+    font: inherit; font-size: 12px; color: var(--ink); background: var(--surface); cursor: pointer;
+    border: 1px solid var(--ring); border-radius: 6px; padding: 3px 8px; margin-left: auto;
+  }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { font-size: 12px; border: 1px solid var(--ring); border-radius: 999px; padding: 2px 8px; color: var(--ink); }
+  .chip i { font-style: normal; color: var(--ink-2); margin-left: 4px; }
+  footer { color: var(--ink-2); font-size: 12px; margin-top: 24px; }
+
+  /* guide */
+  .notice { background: var(--wash); border-radius: 8px; padding: 10px 12px; font-size: 13px; margin-bottom: 12px; }
+  .gsec + .gsec { margin-top: 20px; }
+  .gsec h3 { font-size: 13px; font-weight: 600; color: var(--ink-2); margin: 0 0 8px; }
+  .gcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 12px; }
+  .gcard {
+    min-width: 0; display: flex; flex-direction: column; gap: 8px;
+    background: var(--plane); border: 1px solid var(--ring); border-radius: 10px; padding: 14px 16px;
+  }
+  .gcard p { margin: 0; }
+  .gtop { display: flex; align-items: center; gap: 8px; }
+  .gtop .nm { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+  .gtop .st { margin-left: auto; color: var(--ink-2); font-size: 12px; }
+  .gwhen { color: var(--ink-2); font-size: 13px; }
+  .gsay { font-size: 13px; border-left: 3px solid var(--used); padding: 2px 0 2px 10px; }
+  .gsay b { display: block; color: var(--ink-2); font-size: 12px; font-weight: 500; }
+  .gfoot { margin-top: auto; display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .gfoot code {
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--surface);
+    border: 1px solid var(--ring); border-radius: 6px; padding: 2px 6px; overflow-wrap: anywhere;
+  }
+  .gfoot .hint { color: var(--ink-2); font-size: 12px; }
+  .gcard details summary { color: var(--ink-2); font-size: 12px; cursor: pointer; }
+  .gcard details p { color: var(--ink-2); font-size: 12px; margin-top: 6px; }
+  .gempty { color: var(--ink-2); text-align: center; padding: 24px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1 id="t-title"></h1>
+    <p class="sub" id="t-span"></p>
+  </header>
+
+  <section class="card headline" id="headline" aria-label="Summary"></section>
+
+  <section class="card" id="guide">
+    <h2 id="t-guide"></h2>
+    <p class="sub" id="t-guide-sub"></p>
+    <div id="guide-notice"></div>
+    <div class="controls">
+      <input type="search" id="gq">
+      <div class="seggroup" id="gfilter" role="group"></div>
+      <span class="count" id="gcount"></span>
+    </div>
+    <div id="gbody"></div>
+  </section>
+
+  <section class="card">
+    <h2 id="t-groups"></h2>
+    <p class="sub" id="t-groups-sub"></p>
+    <div class="legend" id="legend"></div>
+    <div class="rows" id="rows" role="list"></div>
+  </section>
+
+  <section class="card">
+    <h2 id="t-skills"></h2>
+    <p class="sub" id="t-skills-sub"></p>
+    <div class="controls">
+      <input type="search" id="q">
+      <div class="seggroup" id="filter" role="group"></div>
+      <span class="count" id="count"></span>
+    </div>
+    <div class="tablewrap"><table id="tbl"><thead><tr id="thead"></tr></thead><tbody id="tbody"></tbody></table></div>
+  </section>
+
+  <div class="two">
+    <section class="card">
+      <h2 id="t-archive"></h2>
+      <p class="sub" id="t-archive-sub"></p>
+      <ul class="plain" id="batches"></ul>
+    </section>
+    <section class="card">
+      <h2 id="t-other"></h2>
+      <p class="sub" id="t-other-sub"></p>
+      <div class="chips" id="unmatched"></div>
+      <div id="problems-wrap" style="margin-top:16px"></div>
+    </section>
+  </div>
+
+  <footer id="t-footer"></footer>
+</main>
+<div id="tip" role="tooltip"></div>
+
+<script>
+const DATA = /*__DATA__*/null;
+
+const KO = {
+  title: "스킬 감사",
+  span: (a, b, d, s, sub) => `${a} ~ ${b} (${d}일) 대화 ${s}개, 보조 에이전트 기록 ${sub}개 기준`,
+  spanNone: "읽을 대화 기록이 없습니다",
+  generated: (t) => `만든 시각 ${t}`,
+  used: "사용한 스킬", of: (n) => `/ ${n}개`, usedNote: (p) => `설치한 스킬의 ${p}`,
+  installed: "설치", unused: "한 번도 안 씀", calls: "호출 수",
+  descShare: "안 쓴 스킬 설명문 비중", descNote: (a, b) => `매 대화마다 읽히는 ${b}자 중 ${a}자`,
+  groups: "묶음별 사용 현황", groupsSub: "막대 길이는 설치한 스킬 수, 진한 부분은 한 번이라도 쓴 스킬입니다.",
+  lgUsed: "사용함", lgUnused: "안 씀",
+  tipUsed: (n, g) => [`${n}개`, `${g} 묶음에서 사용함`], tipUnused: (n, g) => [`${n}개`, `${g} 묶음에서 안 씀`],
+  skills: "스킬 목록", skillsSub: "열 제목을 누르면 정렬됩니다.",
+  search: "이름, 묶음, 설명으로 찾기",
+  fAll: "전체", fUsed: "사용함", fUnused: "안 씀",
+  count: (n, t) => `${t}개 중 ${n}개`,
+  cols: { name: "스킬", status: "상태", calls: "호출", last: "마지막 사용", projects: "프로젝트", source: "출처" },
+  st: { active: "자주 씀", occasional: "가끔 씀", unused: "안 씀" },
+  src: { user: "개인", project: "프로젝트", plugin: "플러그인" },
+  none: "조건에 맞는 스킬이 없습니다",
+  archive: "보관한 스킬", archiveSub: "삭제가 아니라 옮긴 것입니다. 명령을 실행하면 되돌아옵니다.",
+  noBatch: "보관한 스킬이 없습니다.", batch: (n) => `${n}개`, copy: "복사", copied: "복사됨",
+  other: "설치 목록 밖에서 쓴 스킬", otherSub: "기본 제공 스킬, 앱 스킬, 지운 스킬입니다. 여기서는 정리할 수 없습니다.",
+  noOther: "없음", problems: "문제",
+  guide: "내 스킬 안내서",
+  guideSub: "설치한 스킬이 각각 무엇을 하는지, 언제 쓰는지 정리했어요. Claude에게 아래 문장처럼 말하거나 명령어를 입력하면 그 스킬이 움직여요.",
+  say: "이렇게 말해보세요", whenL: "언제: ", orig: "원래 설명 보기",
+  noGuide: "아직 쉬운 안내문이 없어요. 원래 설명:",
+  missing: (n) => `${n}개 스킬은 아직 쉬운 안내문이 없어요. Claude Code에서 "스킬 안내서 만들어줘"라고 하면 채워집니다.`,
+  gsearch: "하고 싶은 일로 찾기 (예: 캡션, 대본, 썸네일)",
+  noSlash: "Claude가 알아서 불러요",
+  footer: "이 파일은 내 컴퓨터에만 있고 어디로도 보내지 않습니다. 새로 집계하려면 Claude Code에서 /skill-audit을 실행하세요. Claude Code가 보관 중인 대화 기록만 세므로, 가끔 쓰는 스킬은 안 쓴 것으로 보일 수 있습니다.",
+};
+const EN = {
+  title: "Skill audit",
+  span: (a, b, d, s, sub) => `${a} to ${b} (${d} days), from ${s} sessions and ${sub} subagent logs`,
+  spanNone: "No session history found",
+  generated: (t) => `Generated ${t}`,
+  used: "Skills used", of: (n) => `/ ${n}`, usedNote: (p) => `${p} of installed skills`,
+  installed: "Installed", unused: "Never used", calls: "Calls",
+  descShare: "Unused share of descriptions", descNote: (a, b) => `${a} of ${b} characters read every session`,
+  groups: "Usage by group", groupsSub: "Bar length is the number of skills installed; the dark part is skills used at least once.",
+  lgUsed: "Used", lgUnused: "Never used",
+  tipUsed: (n, g) => [`${n}`, `used in ${g}`], tipUnused: (n, g) => [`${n}`, `never used in ${g}`],
+  skills: "All skills", skillsSub: "Click a column title to sort.",
+  search: "Search name, group or description",
+  fAll: "All", fUsed: "Used", fUnused: "Never used",
+  count: (n, t) => `${n} of ${t}`,
+  cols: { name: "Skill", status: "Status", calls: "Calls", last: "Last used", projects: "Projects", source: "Source" },
+  st: { active: "Often", occasional: "Sometimes", unused: "Never" },
+  src: { user: "Personal", project: "Project", plugin: "Plugin" },
+  none: "No skills match",
+  archive: "Archived skills", archiveSub: "Moved, not deleted. Run the command to put them back.",
+  noBatch: "Nothing archived.", batch: (n) => `${n} skills`, copy: "Copy", copied: "Copied",
+  other: "Used, but not installed here", otherSub: "Built-in skills, app skills and skills you removed. They cannot be archived here.",
+  noOther: "None", problems: "Problems",
+  guide: "Your skill guide",
+  guideSub: "What each installed skill does and when to use it. Say the sentence to Claude, or type the command, and that skill runs.",
+  say: "Try saying", whenL: "When: ", orig: "Original description",
+  noGuide: "No plain-language guide yet. Original description:",
+  missing: (n) => `${n} skills have no plain-language guide yet. Ask Claude Code to "write my skill guide" to fill them in.`,
+  gsearch: "Search by what you want to do (caption, script, thumbnail)",
+  noSlash: "Claude calls it on its own",
+  footer: "This file stays on your computer and is never sent anywhere. Run /skill-audit in Claude Code to refresh it. Only the history Claude Code still keeps is counted, so a rarely used skill can show as never used.",
+};
+const L = (navigator.language || "en").toLowerCase().startsWith("ko") ? KO : EN;
+document.documentElement.lang = L === KO ? "ko" : "en";
+
+function el(tag, props, ...kids) {
+  const n = document.createElement(tag);
+  if (props) for (const [k, v] of Object.entries(props)) {
+    if (k === "class") n.className = v;
+    else if (k === "text") n.textContent = v;
+    else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+    else n.setAttribute(k, v);
+  }
+  for (const k of kids) if (k != null) n.append(k instanceof Node ? k : document.createTextNode(String(k)));
+  return n;
+}
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => Number(n).toLocaleString();
+const day = (ts) => ts ? ts.slice(0, 10) : "–";
+const pct = (a, b) => b ? Math.round(a / b * 100) + "%" : "0%";
+
+const skills = DATA.skills;
+const used = skills.filter(s => s.calls > 0);
+const totalCalls = skills.reduce((a, s) => a + s.calls, 0);
+const descAll = skills.reduce((a, s) => a + s.desc_chars, 0);
+const descUnused = skills.filter(s => !s.calls).reduce((a, s) => a + s.desc_chars, 0);
+
+/* header */
+$("t-title").textContent = L.title;
+document.title = L.title;
+const m = DATA.meta;
+const spanText = m.first && m.last
+  ? L.span(day(m.first), day(m.last), Math.round((new Date(m.last) - new Date(m.first)) / 864e5) + 1, m.main_sessions, m.subagent_logs)
+  : L.spanNone;
+$("t-span").textContent = spanText + " · " + L.generated(DATA.generated.replace("T", " ").slice(0, 16));
+
+/* headline: one hero figure + four tiles */
+function tile(label, value, note) {
+  return el("div", { class: "tile" }, el("div", { class: "label", text: label }), el("div", { class: "value", text: value }), note ? el("div", { class: "note", text: note }) : null);
+}
+$("headline").append(
+  el("div", { class: "hero" },
+    el("div", { class: "label", text: L.used, style: "color:var(--ink-2);font-size:13px" }),
+    el("div", { class: "hero-num" }, String(used.length), el("small", { text: L.of(skills.length) })),
+    el("div", { class: "note", text: L.usedNote(pct(used.length, skills.length)), style: "color:var(--ink-2);font-size:12px" })),
+  tile(L.installed, fmt(skills.length)),
+  tile(L.unused, fmt(skills.length - used.length)),
+  tile(L.calls, fmt(totalCalls)),
+  tile(L.descShare, pct(descUnused, descAll), L.descNote(fmt(descUnused), fmt(descAll))),
+);
+
+function copyBtn(text) {
+  const btn = el("button", { class: "copy", type: "button", text: L.copy });
+  btn.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(text); btn.textContent = L.copied; setTimeout(() => btn.textContent = L.copy, 1500); } catch (_) {}
+  });
+  return btn;
+}
+
+/* skill guide: what each skill does, when, and a sentence to try */
+const GUIDE = DATA.guide || {};
+$("t-guide").textContent = L.guide;
+$("t-guide-sub").textContent = L.guideSub;
+if (DATA.guide_missing) $("guide-notice").append(el("div", { class: "notice", text: L.missing(DATA.guide_missing) }));
+$("gq").placeholder = L.gsearch;
+$("gq").setAttribute("aria-label", L.gsearch);
+let gfilter = "all";
+for (const [k, label] of [["all", L.fAll], ["used", L.fUsed], ["unused", L.fUnused]]) {
+  $("gfilter").append(el("button", { type: "button", "aria-pressed": String(k === gfilter), "data-k": k, text: label,
+    onclick: () => { gfilter = k; for (const b of $("gfilter").children) b.setAttribute("aria-pressed", String(b.dataset.k === k)); drawGuide(); } }));
+}
+const groupOrder = {};
+{
+  const sizes = {};
+  for (const s of skills) sizes[s.group] = (sizes[s.group] || 0) + 1;
+  Object.keys(sizes).sort((a, b) => sizes[b] - sizes[a] || a.localeCompare(b)).forEach((g, i) => groupOrder[g] = i);
+}
+function guideCard(s) {
+  const g = GUIDE[s.name];
+  const kids = [el("div", { class: "gtop" }, el("span", { class: "nm", text: s.name }),
+    el("span", { class: "st" }, el("i", { class: "dot " + s.status }), L.st[s.status] + (s.calls ? ` · ${s.calls}` : "")))];
+  if (g && g.what) {
+    kids.push(el("p", { text: g.what }));
+    if (g.when) kids.push(el("p", { class: "gwhen", text: L.whenL + g.when }));
+    if (g.try) kids.push(el("p", { class: "gsay" }, el("b", { text: L.say }), `“${g.try}”`));
+    if (s.description) kids.push(el("details", null, el("summary", { text: L.orig }), el("p", { text: s.description })));
+  } else {
+    kids.push(el("p", { class: "gwhen", text: L.noGuide }), el("p", { class: "gwhen", text: s.description }));
+  }
+  kids.push(s.invoke
+    ? el("div", { class: "gfoot" }, el("code", { text: s.invoke }), copyBtn(s.invoke))
+    : el("div", { class: "gfoot" }, el("span", { class: "hint", text: L.noSlash })));
+  return el("article", { class: "gcard" }, ...kids);
+}
+$("gq").addEventListener("input", drawGuide);
+function drawGuide() {
+  const q = $("gq").value.trim().toLowerCase();
+  let rows = skills.filter(s => gfilter === "all" || (gfilter === "used" ? s.calls > 0 : s.calls === 0));
+  if (q) rows = rows.filter(s => {
+    const g = GUIDE[s.name] || {};
+    return [s.name, s.group, s.description, g.what, g.when, g.try].join(" ").toLowerCase().includes(q);
+  });
+  const by = {};
+  for (const s of rows) (by[s.group] ||= []).push(s);
+  const body = $("gbody");
+  body.replaceChildren();
+  if (!rows.length) body.append(el("div", { class: "gempty", text: L.none }));
+  for (const g of Object.keys(by).sort((a, b) => groupOrder[a] - groupOrder[b])) {
+    const list = by[g].sort((a, b) => b.calls - a.calls || a.name.localeCompare(b.name));
+    body.append(el("div", { class: "gsec" }, el("h3", { text: `${g} · ${list.length}` }),
+      el("div", { class: "gcards" }, ...list.map(guideCard))));
+  }
+  $("gcount").textContent = L.count(rows.length, skills.length);
+}
+drawGuide();
+
+/* group chart: one stacked bar per group on a shared scale */
+$("t-groups").textContent = L.groups;
+$("t-groups-sub").textContent = L.groupsSub;
+$("legend").append(
+  el("span", null, el("i", { class: "key", style: "background:var(--used)" }), L.lgUsed),
+  el("span", null, el("i", { class: "key", style: "background:var(--unused)" }), L.lgUnused));
+const groups = {};
+for (const s of skills) (groups[s.group] ||= []).push(s);
+const glist = Object.entries(groups).map(([g, rs]) => ({ g, n: rs.length, u: rs.filter(s => s.calls).length }))
+  .sort((a, b) => b.n - a.n || b.u - a.u || a.g.localeCompare(b.g));
+const maxN = Math.max(1, ...glist.map(x => x.n));
+const tip = $("tip");
+function showTip(e, lines) {
+  tip.replaceChildren(el("b", { text: lines[0] }), el("span", { text: lines[1] }));
+  tip.style.display = "block";
+  const r = e.target.getBoundingClientRect();
+  const x = e.clientX ?? (r.left + r.width / 2), y = e.clientY ?? r.top;
+  tip.style.left = Math.min(x + 12, innerWidth - tip.offsetWidth - 8) + "px";
+  tip.style.top = (y - tip.offsetHeight - 10 < 0 ? y + 16 : y - tip.offsetHeight - 10) + "px";
+}
+const hideTip = () => { tip.style.display = "none"; };
+for (const x of glist) {
+  const track = el("div", { class: "track" });
+  const parts = [["used", x.u, L.tipUsed], ["unused", x.n - x.u, L.tipUnused]].filter(p => p[1] > 0);
+  parts.forEach(([cls, v, t], i) => {
+    const lines = t(v, x.g);
+    const seg = el("div", {
+      class: "seg " + cls + (i === parts.length - 1 ? " end" : ""), tabindex: "0", role: "img",
+      "aria-label": `${x.g}: ${lines.join(" ")}`,
+      style: `width:calc(${v / maxN * 100}% - ${i ? 2 : 0}px)`,
+    });
+    seg.addEventListener("pointermove", (e) => showTip(e, lines));
+    seg.addEventListener("pointerleave", hideTip);
+    seg.addEventListener("focus", (e) => showTip(e, lines));
+    seg.addEventListener("blur", hideTip);
+    track.append(seg);
+  });
+  $("rows").append(el("div", { class: "gname", role: "listitem", text: x.g }), track, el("div", { class: "gval", text: `${x.u} / ${x.n}` }));
+}
+
+/* skills table */
+$("t-skills").textContent = L.skills;
+$("t-skills-sub").textContent = L.skillsSub;
+$("q").placeholder = L.search;
+$("q").setAttribute("aria-label", L.search);
+let filter = "all", sortKey = "calls", sortDir = -1;
+const filters = [["all", L.fAll], ["used", L.fUsed], ["unused", L.fUnused]];
+for (const [k, label] of filters) {
+  $("filter").append(el("button", { type: "button", "aria-pressed": String(k === filter), "data-k": k, text: label,
+    onclick: (e) => { filter = k; for (const b of $("filter").children) b.setAttribute("aria-pressed", String(b.dataset.k === k)); draw(); } }));
+}
+const cols = [
+  ["name", L.cols.name, ""], ["status", L.cols.status, ""], ["calls", L.cols.calls, "num"],
+  ["last_used", L.cols.last, ""], ["projects", L.cols.projects, ""], ["source", L.cols.source, ""],
+];
+const rank = { active: 0, occasional: 1, unused: 2 };
+function sortVal(s, k) {
+  if (k === "status") return rank[s.status];
+  if (k === "projects") return s.projects.length;
+  if (k === "last_used") return s.last_used || "";
+  if (k === "name") return s.name.toLowerCase();
+  return s[k] ?? "";
+}
+for (const [k, label, cls] of cols) {
+  const th = el("th", { class: cls, scope: "col", "data-k": k },
+    el("button", { type: "button", onclick: () => { if (sortKey === k) sortDir *= -1; else { sortKey = k; sortDir = (k === "name" || k === "source") ? 1 : -1; } draw(); } },
+      label, el("span", { class: "arrow" })));
+  $("thead").append(th);
+}
+$("q").addEventListener("input", draw);
+function draw() {
+  const q = $("q").value.trim().toLowerCase();
+  let rows = skills.filter(s => filter === "all" || (filter === "used" ? s.calls > 0 : s.calls === 0));
+  if (q) rows = rows.filter(s => (s.name + " " + s.group + " " + s.description + " " + ((GUIDE[s.name] || {}).what || "")).toLowerCase().includes(q));
+  rows.sort((a, b) => {
+    const x = sortVal(a, sortKey), y = sortVal(b, sortKey);
+    return (x < y ? -1 : x > y ? 1 : 0) * sortDir || b.calls - a.calls || a.name.localeCompare(b.name);
+  });
+  for (const th of $("thead").children) {
+    const on = th.dataset.k === sortKey;
+    th.setAttribute("aria-sort", on ? (sortDir > 0 ? "ascending" : "descending") : "none");
+    th.querySelector(".arrow").textContent = on ? (sortDir > 0 ? "↑" : "↓") : "";
+  }
+  const tb = $("tbody");
+  tb.replaceChildren();
+  if (!rows.length) tb.append(el("tr", { class: "empty" }, el("td", { colspan: String(cols.length), text: L.none })));
+  for (const s of rows) {
+    const projs = s.projects.slice(0, 3).join(", ") + (s.projects.length > 3 ? ` +${s.projects.length - 3}` : "");
+    tb.append(el("tr", null,
+      el("td", null, el("div", { class: "nm", text: s.name }), (() => {
+        const line = (GUIDE[s.name] && GUIDE[s.name].what) || s.description;
+        return line ? el("div", { class: "ds", text: line, title: line }) : null;
+      })()),
+      el("td", null, el("span", { class: "st" }, el("i", { class: "dot " + s.status }), L.st[s.status])),
+      el("td", { class: "num", text: fmt(s.calls) }),
+      el("td", { class: s.last_used ? "" : "muted", text: day(s.last_used) }),
+      el("td", { class: projs ? "" : "muted", text: projs || "–" }),
+      el("td", { class: "muted", text: (L.src[s.source] || s.source) + (s.plugin ? ` · ${s.plugin}` : "") }),
+    ));
+  }
+  $("count").textContent = L.count(rows.length, skills.length);
+}
+draw();
+
+/* archive batches */
+$("t-archive").textContent = L.archive;
+$("t-archive-sub").textContent = L.archiveSub;
+if (!DATA.batches.length) $("batches").append(el("li", { class: "sub", text: L.noBatch }));
+for (const b of DATA.batches.slice().reverse()) {
+  const cmd = DATA.restore_cmd.replace("{id}", b.id);
+  const btn = copyBtn(cmd);
+  const when = b.id.replace(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2}).*$/, "$1-$2-$3 $4:$5");
+  $("batches").append(el("li", null,
+    el("div", { class: "batch-head" }, el("b", { text: when }), el("span", { class: "sub", text: L.batch(b.names.length) }), btn),
+    el("div", { class: "batch-names", text: b.names.join(", ") }),
+    el("code", { class: "cmd", text: cmd })));
+}
+
+/* used elsewhere + problems */
+$("t-other").textContent = L.other;
+$("t-other-sub").textContent = L.otherSub;
+const um = Object.entries(DATA.unmatched).sort((a, b) => b[1] - a[1]);
+if (!um.length) $("unmatched").append(el("span", { class: "sub", text: L.noOther }));
+for (const [k, n] of um) $("unmatched").append(el("span", { class: "chip" }, k, el("i", { text: String(n) })));
+if (DATA.problems.length) {
+  const ul = el("ul", { class: "plain" });
+  for (const p of DATA.problems) ul.append(el("li", null, el("b", { text: p.name }), " · ", el("span", { class: "sub", text: p.problems.join("; ") })));
+  $("problems-wrap").append(el("h2", { text: L.problems }), ul);
+}
+
+$("t-footer").textContent = L.footer;
+</script>
+</body>
+</html>

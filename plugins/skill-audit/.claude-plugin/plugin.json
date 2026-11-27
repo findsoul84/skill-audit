@@ -1,6 +1,6 @@
 {
   "name": "skill-audit",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "See which installed Claude Code skills you actually use, and archive the rest (reversible).",
   "license": "MIT",
   "keywords": [

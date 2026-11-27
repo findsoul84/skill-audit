@@ -3,7 +3,8 @@
 
 Everything runs locally. Nothing is sent anywhere.
 
-  audit.py report  [--days N] [--json] [--out FILE]
+  audit.py report  [--days N] [--json] [--out FILE] [--html] [--no-open]
+  audit.py guide   [--all] [--save FILE]
   audit.py archive [NAME ...] [--group G ...] [--unused] [--days N] [--yes]
   audit.py restore [NAME ...] [--batch ID] [--yes]
   audit.py archives
@@ -13,11 +14,14 @@ Archiving moves skill folders to <config>/skills-archive/<batch>/; it never dele
 """
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import sys
+import webbrowser
 from collections import defaultdict
 from pathlib import Path
 
@@ -73,6 +77,7 @@ def skill_record(path: Path, source: str, plugin: str = "") -> dict:
         "is_link": path.is_symlink(), "broken": False, "size": 0, "lines": 0,
         "desc_chars": 0, "description": "", "group": group_of(name),
         "movable": source in ("user", "project"), "problems": [],
+        "invoke": "/" + (plugin + ":" if plugin else "") + name,
     }
     if rec["is_link"] and not path.exists():
         rec["broken"] = True
@@ -89,6 +94,8 @@ def skill_record(path: Path, source: str, plugin: str = "") -> dict:
         return rec
     fm = parse_frontmatter(text)
     rec["fm_name"] = fm.get("name", "")
+    if fm.get("user-invocable", "").lower() == "false":
+        rec["invoke"] = ""
     rec["description"] = fm.get("description", "")
     rec["desc_chars"] = len(rec["description"])
     rec["lines"] = text.count("\n") + 1
@@ -292,6 +299,83 @@ def attach_usage(records, events):
 
 # ---------------------------------------------------------------- report
 
+# ---------------------------------------------------------------- guide
+
+GUIDE_KEYS = ("what", "when", "try")
+
+
+def guide_path(cfg):
+    return cfg / "skill-audit" / "guide.json"
+
+
+def desc_hash(desc):
+    return hashlib.sha1(desc.encode("utf-8")).hexdigest()[:10]
+
+
+def load_guide(cfg):
+    try:
+        data = json.loads(guide_path(cfg).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    skills = data.get("skills") if isinstance(data, dict) else None
+    return skills if isinstance(skills, dict) else {}
+
+
+def guide_state(records, guide):
+    """Split loadable skills into (has an up-to-date guide entry, needs one)."""
+    ok, need = [], []
+    for r in records:
+        e = guide.get(r["name"])
+        fresh = isinstance(e, dict) and e.get("what") and e.get("desc_hash") == desc_hash(r["description"])
+        (ok if fresh else need).append(r)
+    return ok, need
+
+
+def cmd_guide(args):
+    cfg = config_dir()
+    records = [r for r in discover(cfg, Path.cwd()) if is_skill(r)]
+    guide = load_guide(cfg)
+    path = guide_path(cfg)
+    if args.save:
+        try:
+            new = json.loads(Path(args.save).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            print(f"Could not read {args.save}: {e}", file=sys.stderr)
+            return 1
+        if isinstance(new, dict) and isinstance(new.get("skills"), dict):
+            new = new["skills"]
+        by_name = {r["name"]: r for r in records}
+        saved, skipped = [], []
+        for name, e in (new.items() if isinstance(new, dict) else []):
+            if name not in by_name or not isinstance(e, dict) or not str(e.get("what", "")).strip():
+                skipped.append(name)
+                continue
+            entry = {k: " ".join(str(e.get(k, "")).split())[:400] for k in GUIDE_KEYS}
+            entry["desc_hash"] = desc_hash(by_name[name]["description"])
+            guide[name] = entry
+            saved.append(name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"version": 1, "skills": guide}, ensure_ascii=False, indent=1) + "\n",
+                        encoding="utf-8")
+        print(f"Saved guide entries for {len(saved)} skills to {path}")
+        if skipped:
+            print(f"Skipped {len(skipped)} (not installed, or no 'what'): {', '.join(skipped)}")
+        _ok, need = guide_state(records, guide)
+        print(f"{len(records) - len(need)} of {len(records)} installed skills now have a guide.")
+        return 0
+    ok, need = guide_state(records, guide)
+    todo = records if args.all else need
+    print(json.dumps({
+        "guide_file": str(path),
+        "installed": len(records),
+        "with_guide": len(ok),
+        "to_write": [{"name": r["name"], "invoke": r["invoke"], "source": r["source"],
+                      "description": r["description"], "skill_md": str(Path(r["path"]) / "SKILL.md")}
+                     for r in todo],
+    }, ensure_ascii=False, indent=1))
+    return 0
+
+
 def build(days):
     cfg = config_dir()
     records = discover(cfg, Path.cwd())
@@ -312,7 +396,14 @@ def short_date(ts):
     return ts[:10] if ts else "-"
 
 
+def is_skill(r):
+    """A folder Claude Code would actually load: has a SKILL.md and is not a broken link."""
+    return not r["broken"] and "no SKILL.md" not in r["problems"]
+
+
 def report_md(cfg, records, meta, unmatched, days):
+    all_records = records
+    records = [r for r in all_records if is_skill(r)]
     out = []
     w = out.append
     total = len(records)
@@ -360,7 +451,7 @@ def report_md(cfg, records, meta, unmatched, days):
       f"{desc_unused:,} of them ({(desc_unused / desc_all * 100) if desc_all else 0:.0f}%) from skills never used.")
     w(f"- Disk: {human(sum(r['size'] for r in records))} in total, {human(sum(r['size'] for r in unused))} in unused skills.\n")
 
-    problems = [r for r in records if r["problems"]]
+    problems = [r for r in all_records if r["problems"]]
     if problems:
         w("## Problems\n")
         for r in problems:
@@ -386,18 +477,59 @@ def report_md(cfg, records, meta, unmatched, days):
     plug = sorted({r["plugin"] for r in unused if r["source"] == "plugin"})
     if plug:
         sugg.append(f"- Unused plugin skills ({', '.join(plug)}): remove them with `/plugin`, not by moving folders.")
-    broken = [r["name"] for r in records if r["broken"]]
+    broken = [r["name"] for r in all_records if r["broken"]]
     if broken:
         sugg.append(f"- Broken links, safe to archive: {', '.join(broken)}")
     w("\n".join(sugg) if sugg else "Nothing to clean up.")
+    w("")
+    _ok, need = guide_state(records, load_guide(cfg))
+    w(f"Plain-language guide: {total - len(need)} of {total} skills have one"
+      + (f"; {len(need)} to write (`audit.py guide`)." if need else "."))
     w("")
     w("Archiving moves folders to `skills-archive/` and can be undone with `audit.py restore`. "
       "Only history that Claude Code still keeps is counted: a skill used rarely may show as unused.")
     return "\n".join(out)
 
 
+def write_html(cfg, records, meta, unmatched, days, out_path, open_it):
+    skills = [r for r in records if is_skill(r)]
+    keep = ("name", "group", "source", "plugin", "calls", "last_used", "projects", "status",
+            "desc_chars", "description", "size", "is_link", "invoke")
+    guide = load_guide(cfg)
+    restore = f"python3 {shlex.quote(str(Path(__file__).resolve()))} restore --batch {{id}} --yes"
+    data = {
+        "generated": dt.datetime.now().isoformat(timespec="minutes"),
+        "meta": meta,
+        "days": days,
+        "skills": [{k: r.get(k) for k in keep} for r in skills],
+        "problems": [{"name": r["name"], "source": r["source"], "problems": r["problems"]}
+                     for r in records if r["problems"]],
+        "unmatched": unmatched,
+        "batches": [{"id": b.name, "names": sorted(mf)} for b, mf in load_batches(cfg)],
+        "restore_cmd": restore,
+        "guide": {r["name"]: {k: guide[r["name"]].get(k, "") for k in GUIDE_KEYS}
+                  for r in skills if isinstance(guide.get(r["name"]), dict)},
+        "guide_missing": len(guide_state(skills, guide)[1]),
+    }
+    # Escape "</" so no value can close the <script> tag early.
+    blob = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
+    template = (Path(__file__).resolve().parent / "report_template.html").read_text(encoding="utf-8")
+    html = template.replace("/*__DATA__*/null", blob, 1)
+    out_path = Path(out_path) if out_path else cfg / "skill-audit" / "report.html"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(html, encoding="utf-8")
+    if open_it:
+        webbrowser.open(out_path.resolve().as_uri())
+    return out_path
+
+
 def cmd_report(args):
     cfg, records, meta, unmatched = build(args.days)
+    if args.html:
+        path = write_html(cfg, records, meta, unmatched, args.days, args.out, not args.no_open)
+        print(report_md(cfg, records, meta, unmatched, args.days))
+        print(f"\nVisual report: {path}" + ("" if args.no_open else " (opened in your browser)"))
+        return
     if args.json:
         text = json.dumps({"config": str(cfg), "meta": meta, "skills": records, "unmatched": unmatched},
                           ensure_ascii=False, indent=2)
@@ -562,6 +694,9 @@ def main(argv=None):
     r.add_argument("--days", type=int, help="only count the last N days")
     r.add_argument("--json", action="store_true", help="machine-readable output")
     r.add_argument("--out", help="write the report to a file")
+    r.add_argument("--html", action="store_true",
+                   help="also write a visual HTML report (default <config>/skill-audit/report.html) and open it")
+    r.add_argument("--no-open", action="store_true", help="with --html: do not open the browser")
     r.set_defaults(func=cmd_report)
 
     a = sub.add_parser("archive", help="move skills to skills-archive/ (dry run unless --yes)")
@@ -578,6 +713,11 @@ def main(argv=None):
     s.add_argument("--batch", help="batch id from `archives`")
     s.add_argument("--yes", action="store_true")
     s.set_defaults(func=cmd_restore)
+
+    g = sub.add_parser("guide", help="list skills that need a plain-language guide entry, or save entries")
+    g.add_argument("--all", action="store_true", help="list every skill, not only those missing an entry")
+    g.add_argument("--save", metavar="FILE", help='merge {"skill-name": {"what", "when", "try"}} from FILE')
+    g.set_defaults(func=cmd_guide)
 
     l = sub.add_parser("archives", help="list archived batches")
     l.set_defaults(func=cmd_archives)
