@@ -1,0 +1,13 @@
+{
+  "name": "skill-audit",
+  "owner": {
+    "name": "findsoul84"
+  },
+  "plugins": [
+    {
+      "name": "skill-audit",
+      "source": "./plugins/skill-audit",
+      "description": "See which installed Claude Code skills you actually use, and archive the rest (reversible)."
+    }
+  ]
+}
