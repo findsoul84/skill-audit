@@ -3,5 +3,15 @@
   "version": "0.1.0",
   "description": "See which installed Claude Code skills you actually use, and archive the rest (reversible).",
   "license": "MIT",
-  "keywords": ["skills", "audit", "cleanup", "usage"]
+  "keywords": [
+    "skills",
+    "audit",
+    "cleanup",
+    "usage"
+  ],
+  "author": {
+    "name": "findsoul84",
+    "url": "https://github.com/findsoul84"
+  },
+  "homepage": "https://github.com/findsoul84/skill-audit"
 }

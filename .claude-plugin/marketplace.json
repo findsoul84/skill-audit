@@ -3,6 +3,9 @@
   "owner": {
     "name": "findsoul84"
   },
+  "metadata": {
+    "description": "Claude Code skills for keeping your skill collection lean."
+  },
   "plugins": [
     {
       "name": "skill-audit",
